@@ -25,7 +25,9 @@ TCP_BUFFER_SIZE = 1024
 
 
 class ModRangeIter(object):
-    """ Iterator class for ModRange """
+    """
+    Iterator class for ModRange
+    """
     
     def __init__(self, mr: ModRange, i: int, j: int) -> None:
         """
@@ -140,10 +142,11 @@ class FingerEntry(object):
             node (int, optional): TODO. Defaults to None.
 
         Raises:
-            ValueError: TODO
+            ValueError: If the supplied entry values are invalid.
         """
         if not (0 <= n < NODES and 0 < k <= M):
             raise ValueError('invalid finger entry values')
+        
         self.start = (n + 2**(k-1)) % NODES
         self.next_start = (n + 2**k) % NODES if k < M else n
         self.interval = ModRange(self.start, self.next_start, NODES)
@@ -200,14 +203,18 @@ class ChordNode(object):
     def _handle_rpc(self, client: socket.socket) -> Any:
         pass
 
-    def _call_rpc(self, port: int, message: str, arg: Any=None) -> Any:
+    def _call_rpc(
+        self, port: int, method_name: str, arg1: Any=None, arg2: Any=None
+    ) -> Any:
         """
-        Sends the designated message to the specified host and port 
-        combination.
+        Invokes the specified remote procedure call (RPC) with the supplied
+        parameters. 
 
         Args:
             port (int): Port of the host to send the pickled message to.
-            message (str): Message to pickle and send.
+            method_name (str): Name of the rpc method to invoke.
+            arg1 (Any): 1st positional argument to supply to the rpc call.
+            arg2 (Any): 2nd positional argument to supply to the rpc call.
 
         Raises:
             ConnectionRefusedError: If the host and port combination cannot
@@ -219,12 +226,12 @@ class ChordNode(object):
         """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             # Establish connection with target server
-            print(message, (NODE_HOST, port))
+            print(method_name, (NODE_HOST, port), arg1, arg2)
             s.settimeout(DEFAULT_TIMEOUT)
             s.connect((NODE_HOST, port))
             
             # Convert message into bit stream and send to target server
-            msg_bits = pickle.dumps(message)
+            msg_bits = pickle.dumps((method_name, arg1, arg2))
             s.sendall(msg_bits)
             
             # Retrieve and unpickle data
@@ -253,21 +260,25 @@ class ChordNode(object):
 
         return listener_sock
 
-    def find_predecessor(self, id: int):
+    def find_predecessor(self, node_port: int) -> int:
         """
         Retrieves the port number of the predecessor node
 
         Args:
-            id (_type_): _description_
+            node_port (int): The port number of an existing node in the Chord
+                network.
+
+        Returns:
+            int: TODO
         """
         port = self._node
 
-        while id != self._node or id != self.successor:
-            port = self.closest_preceding_finger(id)
+        while node_port != self._node or node_port != self.successor:
+            port = self.closest_preceding_finger(node_port)
 
         return port
 
-    def find_successor(self, id: int) -> int:
+    def find_successor(self, node_port: int) -> int:
         
         """ Ask this node to find id's successor = successor(predecessor(id))"""
         pred_port = self.find_predecessor(id)
@@ -283,17 +294,17 @@ class ChordNode(object):
         """
         pass
 
-    def _join(self, port_num: int) -> None:
+    def _join(self, node_port: int) -> None:
         """
         Requests for the specified node to join the chord network.
 
         Args:
-            port_num (int): The port number of an existing node, or 0 to start 
+            node_port (int): The port number of an existing node, or 0 to start
                 a new network.
         """
         # Indicates joining into an existing Chord network
-        if port_num != 0:
-            self._init_finger_table(port_num)
+        if node_port != 0:
+            self._init_finger_table(node_port)
             self._update_others()
 
         # Indicates that a new Chord network is being initialized
@@ -303,22 +314,22 @@ class ChordNode(object):
 
             self._predecessor = self._node
 
-    def _init_finger_table(self, port_num: int) -> None:
+    def _init_finger_table(self, node_port: int) -> None:
         """
         Initializes the finger table of this ChordNode.
 
         Args:
-            port_num (int): The port number of an existing node.
+            node_port (int): The port number of an existing node.
         """
         self._finger[1].node = self._call_rpc(
-            port_num, "find_successor", self._finger[1].start
+            node_port, "find_successor", self._finger[1].start
         )
 
         self.predecessor = self._call_rpc(self.successor, "predecessor")        
         
         self._call_rpc(self.successor, "predecessor", self._node)
 
-        for idx in range(1, M - 1):
+        for idx in range(1, M-1):
             if self._finger[idx+1].start == self._node or\
                 self._finger[idx+1].start == self._finger[idx].node:
                 
@@ -326,7 +337,7 @@ class ChordNode(object):
             
             else:
                 self._finger[idx+1].node = self._call_rpc(
-                    port_num, "find_successor", self._finger[idx+1].start
+                    node_port, "find_successor", self._finger[idx+1].start
                 )
 
     def _update_others(self) -> None:
@@ -355,12 +366,17 @@ class ChordNode(object):
         else:
             return 'did nothing {}'.format(self)
 
-    def handle_rpc(self, client: socket.socket) -> None:
+    def _dispatch_rpc(
+        self, method_name: str, arg1: Any, arg2: Any
+    ) -> Any:
+        pass
+
+    def _handle_rpc(self, client: socket.socket) -> None:
         rpc = client.recv(BUF_SZ)
         
         method, arg1, arg2 = pickle.loads(rpc)
 
-        result = self.dispatch_rpc(method, arg1, arg2)
+        result = self._dispatch_rpc(method, arg1, arg2)
         
         client.sendall(pickle.dumps(result))
 
@@ -371,7 +387,7 @@ class ChordNode(object):
         """
         while True:
             client, _ = self._server.accept()
-            threading.Thread(target=self.handle_rpc, args=(client,)).start()
+            threading.Thread(target=self._handle_rpc, args=(client,)).start()
 
 
 if __name__ == "__main__":
