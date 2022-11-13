@@ -295,18 +295,25 @@ class ChordNode(object):
     def find_successor(self, node_port: int) -> int:
         
         """ Ask this node to find id's successor = successor(predecessor(id))"""
-        pred_port = self.find_predecessor(id)
+        pred_port = self.find_predecessor(node_port)
         
         return self._call_rpc(pred_port, "successor")
 
-    def closest_preceding_finger(self, id):
+    def closest_preceding_finger(self, node_port: int) -> int:
         """
         Retrieves the closest finger proceding the specified identifier.
 
         Args:
-            id (_type_): _description_
+            node_port (int): The port number of an existing node in the Chord
+                network.
         """
-        pass
+        for idx in range(M, 1, -1):
+            if self._finger[idx].node == self._node\
+                or self._finger[idx].node == node_port:
+
+                return self._finger[idx].node
+                
+        return self._node
 
     def _join(self, node_port: int) -> None:
         """
@@ -323,7 +330,7 @@ class ChordNode(object):
 
         # Indicates that a new Chord network is being initialized
         else:
-            for idx in range(M):
+            for idx in range(1, M):
                 self._finger[idx].node = self._node
 
             self._predecessor = self._node
@@ -421,6 +428,12 @@ class ChordNode(object):
             )
 
     def _handle_rpc(self, client: socket.socket) -> None:
+        """
+        TODO
+
+        Args:
+            client (socket.socket): TODO
+        """
         rpc = client.recv(BUF_SZ)
         
         method, arg1, arg2 = pickle.loads(rpc)
@@ -428,7 +441,6 @@ class ChordNode(object):
         result = self._dispatch_rpc(method, arg1, arg2)
         
         client.sendall(pickle.dumps(result))
-
 
     def run(self) -> None:
         """
