@@ -200,7 +200,7 @@ class ChordNode(object):
     def _handle_rpc(self, client: socket.socket) -> Any:
         pass
 
-    def _call_rpc(self, port: int, message: str) -> Any:
+    def _call_rpc(self, port: int, message: str, arg: Any=None) -> Any:
         """
         Sends the designated message to the specified host and port 
         combination.
@@ -303,8 +303,31 @@ class ChordNode(object):
 
             self._predecessor = self._node
 
-    def _init_finger_table(self):
-        pass
+    def _init_finger_table(self, port_num: int) -> None:
+        """
+        Initializes the finger table of this ChordNode.
+
+        Args:
+            port_num (int): The port number of an existing node.
+        """
+        self._finger[1].node = self._call_rpc(
+            port_num, "find_successor", self._finger[1].start
+        )
+
+        self.predecessor = self._call_rpc(self.successor, "predecessor")        
+        
+        self._call_rpc(self.successor, "predecessor", self._node)
+
+        for idx in range(1, M - 1):
+            if self._finger[idx+1].start == self._node or\
+                self._finger[idx+1].start == self._finger[idx].node:
+                
+                self._finger[idx+1].node = self._finger[idx].node
+            
+            else:
+                self._finger[idx+1].node = self._call_rpc(
+                    port_num, "find_successor", self._finger[idx+1].start
+                )
 
     def _update_others(self) -> None:
         """
