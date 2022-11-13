@@ -180,6 +180,20 @@ class ChordNode(object):
         self._join()
 
     @property
+    def predecessor(self) -> int:
+        return self._predecessor
+
+    @predecessor.setter
+    def predecessor(self, node_port: int) -> None:
+        """
+        Assigns a new value to the 
+
+        Args:
+            node_port (int): TODO
+        """
+        self._predecessor = node_port
+
+    @property
     def successor(self) -> int:
         """
         Retrieves the successor of this ChordNode.
@@ -350,7 +364,7 @@ class ChordNode(object):
             p = self.find_predecessor((1 + self._node - 2**(i-1) + NODES) % NODES)
             self._call_rpc(p, 'update_finger_table', self._node, i)
 
-    def _update_finger_table(self, s, i) -> str:
+    def update_finger_table(self, s, i) -> str:
         """ if s is i-th finger of n, update this node's finger table with s """
         # FIXME: don't want e.g. [1, 1) which is the whole circle
         if (self._finger[i].start != self._finger[i].node
@@ -369,7 +383,42 @@ class ChordNode(object):
     def _dispatch_rpc(
         self, method_name: str, arg1: Any, arg2: Any
     ) -> Any:
-        pass
+        """
+        Handles the invocation local invocation of the requested RPC.
+
+        Args:
+            method_name (str): Name of the requested RPC.
+            arg1 (Any): 1st positional argument to supply to the RPC.
+            arg2 (Any): 2nd positional argument to supply to the RPC.
+
+        Raises:
+            ValueError: If the supplied method_name and arguments are not
+                supported.
+
+        Returns:
+            Any: Response from RPC.
+        """
+        if method_name == "predecessor" and arg1 is None:
+            return self.predecessor
+        elif method_name == "predecessor" and arg1 is not None:
+            self.predecessor = arg1
+            return None
+        elif method_name == "successor" and arg1 is None:
+            return self.successor
+        elif method_name == "successor" and arg1 is not None:
+            self.successor = arg1
+            return None
+        elif method_name == "find_predecessor":
+            return self.find_predecessor(arg1)
+        elif method_name == "find_successor":
+            return self.find_successor(arg1)
+        elif method_name == "update_finger_table":
+            return self.update_finger_table(arg1, arg2)
+        else:
+            raise ValueError(
+                f"The specified method invocation {method_name}(arg1, arg2) is"
+                "not supported."
+            )
 
     def _handle_rpc(self, client: socket.socket) -> None:
         rpc = client.recv(BUF_SZ)
