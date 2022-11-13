@@ -196,6 +196,10 @@ class ChordNode(object):
         """
         self._finger[1].node = id
 
+
+    def _handle_rpc(self, client: socket.socket) -> Any:
+        pass
+
     def _call_rpc(self, port: int, message: str) -> Any:
         """
         Sends the designated message to the specified host and port 
@@ -251,18 +255,24 @@ class ChordNode(object):
 
     def find_predecessor(self, id: int):
         """
-        Retrieves the node's 
+        Retrieves the port number of the predecessor node
 
         Args:
             id (_type_): _description_
         """
-        pass
+        port = self._node
 
-    def find_successor(self, id: int):
-        """ Ask this node to find id's successor = successor(predecessor(id))"""
-        np = self.find_predecessor(id)
+        while id != self._node or id != self.successor:
+            port = self.closest_preceding_finger(id)
+
+        return port
+
+    def find_successor(self, id: int) -> int:
         
-        return self._call_rpc(np, 'successor')
+        """ Ask this node to find id's successor = successor(predecessor(id))"""
+        pred_port = self.find_predecessor(id)
+        
+        return self._call_rpc(pred_port, "successor")
 
     def closest_preceding_finger(self, id):
         """
@@ -273,30 +283,40 @@ class ChordNode(object):
         """
         pass
 
-    def _join(self) -> None:
+    def _join(self, port_num: int) -> None:
         """
         Requests for the specified node to join the chord network.
 
         Args:
-            node (ChordNode): The node to join into the network.
+            port_num (int): The port number of an existing node, or 0 to start 
+                a new network.
         """
-        # TODO - maybe remove this line since self._predecessor should be None
-        self._predecessor = None
-        
-        self._successor = self.find_successor()
+        # Indicates joining into an existing Chord network
+        if port_num != 0:
+            self._init_finger_table(port_num)
+            self._update_others()
 
-    def init_finger_table(self):
+        # Indicates that a new Chord network is being initialized
+        else:
+            for idx in range(M):
+                self._finger[idx].node = self._node
+
+            self._predecessor = self._node
+
+    def _init_finger_table(self):
         pass
 
-    def update_others(self) -> None:
-        """ Update all other node that should have this node in their finger tables """
+    def _update_others(self) -> None:
+        """
+        Update all other node that should have this node in their finger tables
+        """
         # print('update_others()')
         for i in range(1, M+1):  # find last node p whose i-th finger might be this node
             # FIXME: bug in paper, have to add the 1 +
             p = self.find_predecessor((1 + self._node - 2**(i-1) + NODES) % NODES)
             self._call_rpc(p, 'update_finger_table', self._node, i)
 
-    def update_finger_table(self, s, i) -> str:
+    def _update_finger_table(self, s, i) -> str:
         """ if s is i-th finger of n, update this node's finger table with s """
         # FIXME: don't want e.g. [1, 1) which is the whole circle
         if (self._finger[i].start != self._finger[i].node
