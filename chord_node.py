@@ -4,6 +4,7 @@ import pickle
 import socket
 
 import threading
+from typing import Any
 
 M = 3  # FIXME: Test environment, normally = hashlib.sha1().digest_size * 8
 NODES = 2 ** M
@@ -11,13 +12,16 @@ BUF_SZ = 4096  # socket recv arg
 BACKLOG = 100  # socket listen arg
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
 
-
+# Default timeout for socket connection in seconds
+DEFAULT_TIMEOUT = 1.5
 # Host of the ChordNode.
-LISTENER_HOST = "localhost"
+NODE_HOST = "localhost"
 # Port of the ChordNode. 0 designates that a random port is chosen.
 LISTENER_PORT = 0
 # Maximum connections for listener
 LISTENER_MAX_CONN = 100
+# TCP receive buffer size
+TCP_BUFFER_SIZE = 1024
 
 
 class ModRangeIter(object):
@@ -156,27 +160,73 @@ class FingerEntry(object):
 
 class ChordNode(object):
 
-    def __init__(self, n) -> None:
+    def __init__(self, port_num: int) -> None:
         """
         Constructor for the ChordNode class.
 
         Args:
-            n (TODO): TODO
+            port_num (int): The port number of an existing node, or 0 to start 
+                a new network.
         """
-        self.node = n
-        self.finger = [None] + [FingerEntry(n, k) for k in range(1, M+1)]  # indexing starts at 1
-        self.predecessor = None
-        self.keys = {}
+        self._node = port_num
+        self._finger = [None] + [FingerEntry(port_num, k) for k in range(1, M+1)]  # indexing starts at 1
+        self._predecessor = None
+        self._keys = {}
         self._server = self._start_server()
 
+        self._join()
+
     @property
-    def successor(self):
-        return self.finger[1].node
+    def successor(self) -> int:
+        """
+        Retrieves the successor of this ChordNode.
+
+        Returns:
+            int: The key of the successor node.
+        """
+        return self._finger[1].node
 
     @successor.setter
-    def successor(self, id):
-        self.finger[1].node = id
+    def successor(self, id: int) -> None:
+        """
+        Assigns a new value to the 
 
+        Args:
+            id (int): TODO
+        """
+        self._finger[1].node = id
+
+    def _call_rpc(self, port: int, message: str) -> Any:
+        """
+        Sends the designated message to the specified host and port 
+        combination.
+
+        Args:
+            port (int): Port of the host to send the pickled message to.
+            message (str): Message to pickle and send.
+
+        Raises:
+            ConnectionRefusedError: If the host and port combination cannot
+                be connected to.
+            TimeoutError: If the operation times out.
+
+        Returns:
+            Any: Response recieved from target server.
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Establish connection with target server
+            print(message, (NODE_HOST, port))
+            s.settimeout(DEFAULT_TIMEOUT)
+            s.connect((NODE_HOST, port))
+            
+            # Convert message into bit stream and send to target server
+            msg_bits = pickle.dumps(message)
+            s.sendall(msg_bits)
+            
+            # Retrieve and unpickle data
+            data = s.recv(TCP_BUFFER_SIZE)
+            response = pickle.loads(data)
+            return response
 
     def _start_server(self) -> socket.socket:
         """
@@ -186,8 +236,9 @@ class ChordNode(object):
             socket.socket: The configured listener socket.
         """
         listener_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener_sock.bind((LISTENER_HOST, LISTENER_PORT))
+        listener_sock.bind((NODE_HOST, LISTENER_PORT)) #TODO - maybe make this 0 only if port number = 0
         listener_sock.listen(LISTENER_MAX_CONN)
+        listener_sock.setblocking(True)
 
         host, port = listener_sock.getsockname()
         
@@ -198,7 +249,7 @@ class ChordNode(object):
 
         return listener_sock
 
-    def find_predecessor(self, id):
+    def find_predecessor(self, id: int):
         """
         Retrieves the node's 
 
@@ -207,11 +258,11 @@ class ChordNode(object):
         """
         pass
 
-    def find_successor(self, id):
+    def find_successor(self, id: int):
         """ Ask this node to find id's successor = successor(predecessor(id))"""
         np = self.find_predecessor(id)
         
-        return self.call_rpc(np, 'successor')
+        return self._call_rpc(np, 'successor')
 
     def closest_preceding_finger(self, id):
         """
@@ -222,16 +273,17 @@ class ChordNode(object):
         """
         pass
 
-    # TODO - maybe join is for self?
-    def join(self, node: ChordNode) -> None:
+    def _join(self) -> None:
         """
         Requests for the specified node to join the chord network.
 
         Args:
             node (ChordNode): The node to join into the network.
         """
-        self.predecessor = None
-        self.successor = self.find_successor()
+        # TODO - maybe remove this line since self._predecessor should be None
+        self._predecessor = None
+        
+        self._successor = self.find_successor()
 
     def init_finger_table(self):
         pass
@@ -241,25 +293,24 @@ class ChordNode(object):
         # print('update_others()')
         for i in range(1, M+1):  # find last node p whose i-th finger might be this node
             # FIXME: bug in paper, have to add the 1 +
-            p = self.find_predecessor((1 + self.node - 2**(i-1) + NODES) % NODES)
-            self.call_rpc(p, 'update_finger_table', self.node, i)
+            p = self.find_predecessor((1 + self._node - 2**(i-1) + NODES) % NODES)
+            self._call_rpc(p, 'update_finger_table', self._node, i)
 
     def update_finger_table(self, s, i) -> str:
         """ if s is i-th finger of n, update this node's finger table with s """
         # FIXME: don't want e.g. [1, 1) which is the whole circle
-        if (self.finger[i].start != self.finger[i].node
+        if (self._finger[i].start != self._finger[i].node
                  # FIXME: bug in paper, [.start
-                 and s in ModRange(self.finger[i].start, self.finger[i].node, NODES)):
+                 and s in ModRange(self._finger[i].start, self._finger[i].node, NODES)):
             print('update_finger_table({},{}): {}[{}] = {} since {} in [{},{})'.format(
-                     s, i, self.node, i, s, s, self.finger[i].start, self.finger[i].node))
-            self.finger[i].node = s
+                     s, i, self._node, i, s, s, self._finger[i].start, self._finger[i].node))
+            self._finger[i].node = s
             print('#', self)
-            p = self.predecessor  # get first node preceding myself
-            self.call_rpc(p, 'update_finger_table', s, i)
+            p = self._predecessor  # get first node preceding myself
+            self._call_rpc(p, 'update_finger_table', s, i)
             return str(self)
         else:
             return 'did nothing {}'.format(self)
-
 
     def handle_rpc(self, client: socket.socket) -> None:
         rpc = client.recv(BUF_SZ)
@@ -271,9 +322,12 @@ class ChordNode(object):
         client.sendall(pickle.dumps(result))
 
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Handles requests from the client.
+        """
         while True:
-            client, client_addr = server.accept()
+            client, _ = self._server.accept()
             threading.Thread(target=self.handle_rpc, args=(client,)).start()
 
 
@@ -293,14 +347,14 @@ if __name__ == "__main__":
         )
     )
     parser.add_argument(
-        "host",
-        type=str,
-        help="Name of host running the forex publisher."
-    )
-    parser.add_argument(
         "port",
         type=int,
         help="The port number the forex publisher is running on."
     )
 
     parsed_args = parser.parse_args()
+
+    # Initialize a Chord node
+    node = ChordNode(parsed_args.port)
+    # Listen for incoming connections from other nodes or queriers
+    node.run()
