@@ -1,15 +1,19 @@
 from __future__ import annotations
 from argparse import ArgumentParser
+import hashlib
 import pickle
 import socket
 
 import threading
-from typing import Any
+from typing import Any, Dict, List, Tuple
 
-M = 3  # FIXME: Test environment, normally = hashlib.sha1().digest_size * 8
+# m-bit identifier
+M = 7
+# Maximum number of nodes in Chord network
 NODES = 2 ** M
-BUF_SZ = 4096  # socket recv arg
+
 BACKLOG = 100  # socket listen arg
+
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
 
 # Default timeout for socket connection in seconds
@@ -22,6 +26,8 @@ LISTENER_PORT = 0
 LISTENER_MAX_CONN = 100
 # TCP receive buffer size
 TCP_BUFFER_SIZE = 1024
+# The range of possible port numbers from 0 to 2^16
+POSSIBLE_PORTS = 2 ** 16
 
 
 class ModRangeIter(object):
@@ -171,6 +177,7 @@ class ChordNode(object):
             port_num (int): The port number of an existing node, or 0 to start 
                 a new network.
         """
+        self._node_map = self._generate_node_map()
         self._node = port_num
         self._finger = [None] + [FingerEntry(port_num, k) for k in range(1, M+1)]  # indexing starts at 1
         self._predecessor = None
@@ -178,6 +185,61 @@ class ChordNode(object):
         self._server = self._start_server()
 
         self._join()
+
+    def _hash(self, value: str, bucket_size: int) -> int:
+        """
+        Generates a hash value for the specified node address.
+
+        Args:
+            address (str): The value to hash.
+            bucket_size (int): The size of the bucket.
+
+        Returns:
+            int: The resulting index.
+        """
+        encoded_val = value.encode("utf-8")
+        hash_val = hashlib.sha1(encoded_val).hexdigest()
+
+        idx = int(hash_val, bucket_size) % (2 ** M)
+
+        return idx
+
+    def _generate_node_map(self) -> Dict[str, List[Tuple[str, int]]]:
+        """
+        Generates a hash table with the hash values mapped to 
+
+        Returns:
+            Dict[str, List[Tuple[str, int]]]: The map of possible hash values
+                mapped to their respective node addresses.
+        """
+        node_map: Dict[str, List[Tuple[str, int]]] = {}
+
+        for port in POSSIBLE_PORTS:
+            addr = (NODE_HOST, port)
+
+            while not addr_added:
+                address = f"{host}:{port}"
+
+                addr_hash = self._hash(addr)
+
+                if addr_hash in node_map:
+                    print('cannot use', addr, 'hash conflict', n)
+                else:
+                    node_map[addr_hash] = addr
+
+        return node_map
+
+    def lookup_node(self, id: str) -> Tuple[str, int]:
+        """
+        Retrieves the address of the sought Node.
+
+        Args:
+            id (str): Hash identifier of the sought Node.
+
+        Returns:
+            Tuple[str, int]: Host and port of the Node.
+        """
+        return self._node_map[id]
 
     @property
     def predecessor(self) -> int:
@@ -212,11 +274,7 @@ class ChordNode(object):
             id (int): TODO
         """
         self._finger[1].node = id
-
-
-    def _handle_rpc(self, client: socket.socket) -> Any:
-        pass
-
+    
     def _call_rpc(
         self, port: int, method_name: str, arg1: Any=None, arg2: Any=None
     ) -> Any:
@@ -293,7 +351,6 @@ class ChordNode(object):
         return port
 
     def find_successor(self, node_port: int) -> int:
-        
         """ Ask this node to find id's successor = successor(predecessor(id))"""
         pred_port = self.find_predecessor(node_port)
         
@@ -429,12 +486,12 @@ class ChordNode(object):
 
     def _handle_rpc(self, client: socket.socket) -> None:
         """
-        TODO
+        A helper method for handling incoming RPC calls.
 
         Args:
-            client (socket.socket): TODO
+            client (socket.socket): The socket for the client's connection.
         """
-        rpc = client.recv(BUF_SZ)
+        rpc = client.recv(TCP_BUFFER_SIZE)
         
         method, arg1, arg2 = pickle.loads(rpc)
 
