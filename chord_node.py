@@ -7,15 +7,14 @@ import socket
 import threading
 from typing import Any, Dict, List, Tuple
 
-# m-bit identifier
-M = 7
-# Maximum number of nodes in Chord network
-NODES = 2 ** M
-
 BACKLOG = 100  # socket listen arg
 
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
 
+# m-bit identifier
+M = 7
+# Maximum number of nodes in Chord network
+NODES = 2 ** M
 # Default timeout for socket connection in seconds
 DEFAULT_TIMEOUT = 1.5
 # Host of the ChordNode.
@@ -84,6 +83,14 @@ class ModRange(object):
     """
 
     def __init__(self, start: int, stop: int, divisor: int) -> None:
+        """
+        The constructor for the ModRange class.
+
+        Args:
+            start (int): _description_
+            stop (int): _description_
+            divisor (int): _description_
+        """
         self.divisor = divisor
         self.start = start % self.divisor
         self.stop = stop % self.divisor
@@ -289,20 +296,14 @@ class ChordNode(object):
         self._finger[1].node = id
     
     def _call_rpc(
-        self, 
-        host: str, 
-        port: int, 
-        method_name: str, 
-        arg1: Any=None, 
-        arg2: Any=None
+        self, node_id: int, method_name: str, arg1: Any=None, arg2: Any=None
     ) -> Any:
         """
         Invokes the specified remote procedure call (RPC) with the supplied
         parameters. 
 
         Args
-            host (int): Name of the host to send the pickled message to.
-            port (int): Port of the host to send the pickled message to.
+            node_id (int): The identifier of the destination Node.
             method_name (str): Name of the rpc method to invoke.
             arg1 (Any): 1st positional argument to supply to the rpc call.
             arg2 (Any): 2nd positional argument to supply to the rpc call.
@@ -315,6 +316,8 @@ class ChordNode(object):
         Returns:
             Any: Response recieved from target server.
         """
+        host, port = self._lookup_node(node_id)
+
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             # Establish connection with target server
             print(method_name, (host, port), arg1, arg2)
@@ -361,13 +364,13 @@ class ChordNode(object):
         Returns:
             int: The identifier of the predecessor node.
         """
-        host, port = self._lookup_node(id)
+        host, port = self._lookup_node(node_id)
 
         predecessor_id = self._id
 
-        successor_val = self._call_rpc(host, port, "successor")
+        successor_id = self._call_rpc(node_id, "successor")
 
-        while id not in ModRange(predecessor_id, successor_val, NODES):
+        while id not in ModRange(predecessor_id, successor_id, NODES):
             id = self._call_rpc(port, "closest_preceding_finger", id)
 
         return port
@@ -384,25 +387,20 @@ class ChordNode(object):
         """
         predecessor_id = self.find_predecessor(node_id)
         
-        _, port = self._lookup_node(predecessor_id)
-        
-        return self._call_rpc(port, "successor")
+        return self._call_rpc(predecessor_id, "successor")
 
-    def closest_preceding_finger(self, node_port: int) -> int:
+    def closest_preceding_finger(self, node_id: int) -> int:
         """
         Retrieves the closest finger proceding the specified identifier.
 
         Args:
-            node_port (int): The port number of an existing node in the Chord
-                network.
+             node_id (int): The identifier of an arbitrary node.
         """
         for idx in range(M, 1, -1):
-            if self._finger[idx].node == self._node\
-                or self._finger[idx].node == node_port:
-
+            if self._finger[idx].node in ModRange(self._id, node_id, NODES):
                 return self._finger[idx].node
                 
-        return self._node
+        return self._id
 
     def _join(self, node_port: int) -> None:
         """
@@ -414,40 +412,40 @@ class ChordNode(object):
         """
         # Indicates joining into an existing Chord network
         if node_port != 0:
-            self._init_finger_table(node_port)
+            self._init_finger_table(self._id)
             self._update_others()
 
         # Indicates that a new Chord network is being initialized
         else:
             for idx in range(1, M):
-                self._finger[idx].node = self._node
+                self._finger[idx].node = self._id
 
-            self._predecessor = self._node
+            self.predecessor = self._id
 
-    def _init_finger_table(self, node_port: int) -> None:
+    def _init_finger_table(self, node_id: int) -> None:
         """
         Initializes the finger table of this ChordNode.
 
         Args:
-            node_port (int): The port number of an existing node.
+            node_id (int): The identifier of an arbitrary node.
         """
         self._finger[1].node = self._call_rpc(
-            node_port, "find_successor", self._finger[1].start
+            node_id, "find_successor", self._finger[1].start
         )
 
         self.predecessor = self._call_rpc(self.successor, "predecessor")        
         
-        self._call_rpc(self.successor, "predecessor", self._node)
+        self._call_rpc(self.successor, "predecessor", self._id)
 
         for idx in range(1, M-1):
-            if self._finger[idx+1].start == self._node or\
-                self._finger[idx+1].start == self._finger[idx].node:
+            if self._finger[idx+1].start\
+                in ModRange(self._id, self._finger[idx].node, NODES):
                 
                 self._finger[idx+1].node = self._finger[idx].node
             
             else:
                 self._finger[idx+1].node = self._call_rpc(
-                    node_port, "find_successor", self._finger[idx+1].start
+                    self._id, "find_successor", self._finger[idx+1].start
                 )
 
     def _update_others(self) -> None:
@@ -457,8 +455,9 @@ class ChordNode(object):
         # print('update_others()')
         for idx in range(1, M+1):  # find last node p whose i-th finger might be this node
             # FIXME: bug in paper, have to add the 1 +
-            p = self.find_predecessor((1 + self._node - 2**(idx-1) + NODES) % NODES)
-            self._call_rpc(p, 'update_finger_table', self._node, idx)
+            pred_id = self.find_predecessor((1 + self._id - 2**(idx-1) + NODES) % NODES)
+
+            self._call_rpc(pred_id, 'update_finger_table', self._id, idx)
 
     def update_finger_table(self, s, i) -> str:
         """ if s is i-th finger of n, update this node's finger table with s """
@@ -467,13 +466,12 @@ class ChordNode(object):
                  # FIXME: bug in paper, [.start
                  and s in ModRange(self._finger[i].start, self._finger[i].node, NODES)):
             print('update_finger_table({},{}): {}[{}] = {} since {} in [{},{})'.format(
-                     s, i, self._node, i, s, s, self._finger[i].start, self._finger[i].node))
+                     s, i, self._id, i, s, s, self._finger[i].start, self._finger[i].node))
             self._finger[i].node = s
             
             print('#', self)
             
-            p = self._predecessor  # get first node preceding myself
-            self._call_rpc(p, 'update_finger_table', s, i)
+            self._call_rpc(self._predecessor, 'update_finger_table', s, i)
             return str(self)
         else:
             return 'did nothing {}'.format(self)
