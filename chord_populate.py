@@ -6,9 +6,10 @@ Version: 2022-11-13
 """
 from argparse import ArgumentParser
 from csv import DictReader
+import hashlib
 import pickle
 import socket
-from typing import List, NamedTuple
+from typing import Any, List, NamedTuple
 
 
 # Name of the CSV column containing the player identifier
@@ -16,7 +17,7 @@ COL_PLAYER_ID = "Player Id"
 # Name of the CSV column containing the year
 COL_YEAR = "Year"
 # TCP receive buffer size
-TCP_BUFFER_SIZE = 1024
+TCP_BUFFER_SIZE = 4096
 # Default timeout for socket connection in seconds
 DEFAULT_TIMEOUT = 1.5
 # Host of the ChordNode.
@@ -67,17 +68,32 @@ class ChordPopulator:
 
         return records
 
-    def _upload_data(self, port: int, player_id: str, year: int) -> None:
+    def _hash(self, value: str) -> str:
+        """
+        Generates a hash value for the specified node address.
+
+        Args:
+            address (str): The value to hash.
+
+        Returns:
+            str: The resulting hashed value.
+        """
+        encoded_val = value.encode("utf-8")
+        hash_val = hashlib.sha1(encoded_val).hexdigest()
+        return hash_val
+
+    def _call_rpc(
+        self, port: int, method_name: str, arg1: Any=None, arg2: Any=None
+    ) -> Any:
         """
         Invokes the specified remote procedure call (RPC) with the supplied
         parameters. 
 
         Args
-            port (int): Port number of an existing ChordNode to call an RPC
-                against.
-            player_id (str): The identifier of the player for the career 
-                passing statistic.
-            year (int): The year in which the passing statistic was recorded.
+            port (int): The port of the destination Node.
+            method_name (str): Name of the rpc method to invoke.
+            arg1 (Any): 1st positional argument to supply to the rpc call.
+            arg2 (Any): 2nd positional argument to supply to the rpc call.
 
         Raises:
             ConnectionRefusedError: If the host and port combination cannot
@@ -93,7 +109,7 @@ class ChordPopulator:
             s.connect((NODE_HOST, port))
             
             # Convert message into bit stream and send to target server
-            msg_bits = pickle.dumps(("find_successor", player_id, year)) #FIXME
+            msg_bits = pickle.dumps((method_name, arg1, arg2))
             s.sendall(msg_bits)
             
             # Retrieve and unpickle data
@@ -109,7 +125,21 @@ class ChordPopulator:
             port (int): Port number of an existing ChordNode.
         """
         for player_id, year in self._records:
-            self._upload_data(port, player_id, year)
+            try:
+                # Identify the Node for storing the key, value pair 
+                # TODO - should this return successor port?
+                successor_port = self._call_rpc(port, "find_successor")
+
+                key = self._hash(f"{player_id},{year}")
+                value = "" #FIXME
+
+                # Save the key, value pair in the specified Node
+                self._call_rpc(successor_port, "store_value", key, value)
+
+            except ConnectionRefusedError as e:
+                print(f"Failed to connect: {e}")
+            except TimeoutError as e:
+                print(f"Operation timed out: {e}") 
 
 
 if __name__ == "__main__":
