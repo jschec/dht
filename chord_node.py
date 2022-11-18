@@ -3,13 +3,8 @@ from argparse import ArgumentParser
 import hashlib
 import pickle
 import socket
-
 import threading
 from typing import Any, Dict, List, Tuple
-
-BACKLOG = 100  # socket listen arg
-
-TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
 
 # m-bit identifier
 M = 7
@@ -24,7 +19,7 @@ LISTENER_PORT = 0
 # Maximum connections for listener
 LISTENER_MAX_CONN = 100
 # TCP receive buffer size
-TCP_BUFFER_SIZE = 1024
+TCP_BUFFER_SIZE = 4096
 # The range of possible port numbers from 0 to 2^16
 POSSIBLE_PORTS = 2 ** 16
 
@@ -87,9 +82,9 @@ class ModRange(object):
         The constructor for the ModRange class.
 
         Args:
-            start (int): _description_
-            stop (int): _description_
-            divisor (int): _description_
+            start (int): TODO
+            stop (int): TODO
+            divisor (int): TODO
         """
         self.divisor = divisor
         self.start = start % self.divisor
@@ -103,17 +98,32 @@ class ModRange(object):
             self.intervals = (range(self.start, self.divisor), range(0, self.stop))
 
     def __repr__(self) -> str:
-        """ Something like the interval|node charts in the paper """
+        """
+        Something like the interval|node charts in the paper
+        """
         return ''.format(self.start, self.stop, self.divisor)
 
-    def __contains__(self, id) -> bool:
-        """ Is the given id within this finger's interval? """
+    def __contains__(self, node_id: int) -> bool:
+        """
+        Determines if the specified node_id is within this finger's interval.
+
+        Returns:
+            bool: True if the node_id is within the finger's interval, 
+                otherwise False.
+        """
         for interval in self.intervals:
-            if id in interval:
+            if node_id in interval:
                 return True
+        
         return False
 
     def __len__(self) -> int:
+        """
+        Retrives the total amount of intervals in this ModRangeIter.
+
+        Returns:
+            int: The total amount of intervals.
+        """
         total = 0
         
         for interval in self.intervals:
@@ -122,6 +132,12 @@ class ModRange(object):
         return total
 
     def __iter__(self) -> ModRangeIter:
+        """
+        TODO
+
+        Returns:
+            ModRangeIter: TODO
+        """
         return ModRangeIter(self, 0, -1)
 
 
@@ -170,9 +186,15 @@ class FingerEntry(object):
         """ Something like the interval|node charts in the paper """
         return ''.format(self.start, self.next_start, self.node)
 
-    def __contains__(self, id) -> bool:
-        """ Is the given id within this finger's interval? """
-        return id in self.interval
+    def __contains__(self, node_id: int) -> bool:
+        """
+        Determines if the specified node_id is within this finger's interval.
+
+        Returns:
+            bool: True if the node_id is within the finger's interval, 
+                otherwise False.
+        """
+        return node_id in self.interval
 
 
 class ChordNode(object):
@@ -258,7 +280,7 @@ class ChordNode(object):
     @property
     def predecessor(self) -> int:
         """
-        TODO
+        Retrieves the predecessor of this ChordNode.
 
         Returns:
             int: Identifier of the predecessor.
@@ -268,12 +290,12 @@ class ChordNode(object):
     @predecessor.setter
     def predecessor(self, node_port: int) -> None:
         """
-        Assigns a new value to the 
+        Assigns a new value to the predecessor of this ChordNode.
 
         Args:
             node_port (int): TODO
         """
-        self._predecessor = node_port
+        self._predecessor = node_port #FIXME
 
     @property
     def successor(self) -> int:
@@ -353,7 +375,6 @@ class ChordNode(object):
             f"Started listener for {node_id} at {self._host}:{self._port}"
         )
 
-    # TODO - fix this
     def find_predecessor(self, node_id: int) -> int:
         """
         Retrieves the identifier of the predecessor node.
@@ -364,16 +385,15 @@ class ChordNode(object):
         Returns:
             int: The identifier of the predecessor node.
         """
-        host, port = self._lookup_node(node_id)
-
         predecessor_id = self._id
-
         successor_id = self._call_rpc(node_id, "successor")
 
-        while id not in ModRange(predecessor_id, successor_id, NODES):
-            id = self._call_rpc(port, "closest_preceding_finger", id)
+        while node_id not in ModRange(predecessor_id, successor_id, NODES):
+            predecessor_id = self._call_rpc(
+                predecessor_id, "closest_preceding_finger", node_id
+            )
 
-        return port
+        return predecessor_id
 
     def find_successor(self, node_id: int) -> int:
         """
@@ -394,7 +414,10 @@ class ChordNode(object):
         Retrieves the closest finger proceding the specified identifier.
 
         Args:
-             node_id (int): The identifier of an arbitrary node.
+            node_id (int): The identifier of an arbitrary node.
+
+        Returns:
+            int: TODO
         """
         for idx in range(M, 1, -1):
             if self._finger[idx].node in ModRange(self._id, node_id, NODES):
@@ -429,11 +452,10 @@ class ChordNode(object):
         Args:
             node_id (int): The identifier of an arbitrary node.
         """
-        self._finger[1].node = self._call_rpc(
+        self.successor = self._call_rpc(
             node_id, "find_successor", self._finger[1].start
         )
-
-        self.predecessor = self._call_rpc(self.successor, "predecessor")        
+        self.predecessor = self._call_rpc(self.successor, "predecessor")       
         
         self._call_rpc(self.successor, "predecessor", self._id)
 
@@ -445,7 +467,7 @@ class ChordNode(object):
             
             else:
                 self._finger[idx+1].node = self._call_rpc(
-                    self._id, "find_successor", self._finger[idx+1].start
+                    node_id, "find_successor", self._finger[idx+1].start
                 )
 
     def _update_others(self) -> None:
@@ -454,24 +476,26 @@ class ChordNode(object):
         """
         # print('update_others()')
         for idx in range(1, M+1):  # find last node p whose i-th finger might be this node
+            
             # FIXME: bug in paper, have to add the 1 +
             pred_id = self.find_predecessor((1 + self._id - 2**(idx-1) + NODES) % NODES)
 
-            self._call_rpc(pred_id, 'update_finger_table', self._id, idx)
+            self._call_rpc(pred_id, "update_finger_table", self._id, idx)
 
-    def update_finger_table(self, s, i) -> str:
+    def update_finger_table(self, s, idx: int) -> str:
         """ if s is i-th finger of n, update this node's finger table with s """
         # FIXME: don't want e.g. [1, 1) which is the whole circle
-        if (self._finger[i].start != self._finger[i].node
+        if (self._finger[idx].start != self._finger[idx].node
                  # FIXME: bug in paper, [.start
-                 and s in ModRange(self._finger[i].start, self._finger[i].node, NODES)):
+                 and s in ModRange(self._finger[idx].start, self._finger[idx].node, NODES)):
+            
             print('update_finger_table({},{}): {}[{}] = {} since {} in [{},{})'.format(
-                     s, i, self._id, i, s, s, self._finger[i].start, self._finger[i].node))
-            self._finger[i].node = s
+                     s, idx, self._id, idx, s, s, self._finger[idx].start, self._finger[idx].node))
+            self._finger[idx].node = s
             
             print('#', self)
             
-            self._call_rpc(self._predecessor, 'update_finger_table', s, i)
+            self._call_rpc(self._predecessor, 'update_finger_table', s, idx)
             return str(self)
         else:
             return 'did nothing {}'.format(self)
@@ -506,10 +530,22 @@ class ChordNode(object):
             return None
         elif method_name == "find_predecessor":
             return self.find_predecessor(arg1)
-        elif method_name == "find_successor":
+        elif method_name == "find_successor" and arg2 is None:
             return self.find_successor(arg1)
+        elif method_name == "find_successor" and arg1 is not None and arg2 is not None:
+            # TODO - how to store data
+            node_id = self._hash(f"{arg1},{arg2}", M)
+            return self.find_successor(node_id)
+
         elif method_name == "update_finger_table":
             return self.update_finger_table(arg1, arg2)
+        elif method_name == "closest_preceding_finger":
+            return self.closest_preceding_finger(arg1)
+        elif method_name == "store_value":
+            self._keys[arg1] = arg2
+            return None
+        elif method_name == "get_value":
+            return self._keys.get(arg1, None)
         else:
             raise ValueError(
                 f"The specified method invocation {method_name}(arg1, arg2) is"
@@ -524,7 +560,7 @@ class ChordNode(object):
             client (socket.socket): The socket for the client's connection.
         """
         rpc = client.recv(TCP_BUFFER_SIZE)
-        
+
         method, arg1, arg2 = pickle.loads(rpc)
 
         result = self._dispatch_rpc(method, arg1, arg2)
@@ -552,13 +588,16 @@ if __name__ == "__main__":
     """
     parser = ArgumentParser(
         description=(
-            "Connects with the forex publisher"
+            "Initialize and join nodes to a Chord network."
         )
     )
     parser.add_argument(
         "port",
         type=int,
-        help="The port number the forex publisher is running on."
+        help=(
+            "The port number of an existing node, or 0 to start a new"
+            " network."
+        )
     )
 
     parsed_args = parser.parse_args()
