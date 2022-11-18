@@ -102,18 +102,21 @@ if __name__ == "__main__":
     """
     parser = ArgumentParser(
         description=(
-            "Connects with the forex publisher"
+            "Executes queries against a Chord network."
         )
     )
     parser.add_argument(
         "port",
         type=int,
-        help="The port number the forex publisher is running on."
+        help="The port number of an existing ChordNode."
     )
     parser.add_argument(
         "key",
         type=int,
-        help="The port number the forex publisher is running on."
+        help=(
+            "The sought key to query for. This key consists of the "
+            "concatenated cell values from column 1 and column 4."
+        )
     )
 
     parsed_args = parser.parse_args()
