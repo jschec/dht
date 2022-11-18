@@ -79,15 +79,23 @@ class ChordQuery:
             response = pickle.loads(data)
             return response
 
-    # FIXME - determine return type
-    def query(self, key: str):
+    def retrieve_value(self, key: str) -> None:
+        """
+        Queries the Chord network for the value mapped to the specified key
+        and displays the resulting response.
+
+        Args:
+            key (str): The sought key to query for.
+        """
         hashed_val = self._hash(key)
 
         # Identify the Node for retrieving value of the specified key
         # FIXME - make find_successor return a port number?
         successor_port = self._call_rpc(self._port, "find_successor")
 
-        return self._call_rpc(successor_port, "get_value", hashed_val)
+        response = self._call_rpc(successor_port, "get_value", hashed_val)
+
+        #TODO - display response to standard output
 
 
 if __name__ == "__main__":
@@ -124,7 +132,4 @@ if __name__ == "__main__":
     # Initializes the query Object
     querier = ChordQuery(parsed_args.port)
     # Retrieve the value mapped to the specified key from the Chord network.
-    response = querier.query(parsed_args.key)
-
-    # TODO - figure out how to format this displayed value
-    print(response)
+    response = querier.retrieve_value(parsed_args.key)
