@@ -11,19 +11,17 @@ import hashlib
 import pickle
 import socket
 import threading
-from typing import Any, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 # m-bit identifier
-M = 5
+M = 25
 # Maximum number of nodes in Chord network
 NODES = 2 ** M
-# Default timeout for socket connection in seconds
-DEFAULT_TIMEOUT = 1.5
+# Default timeout for listener connection in seconds
+LISTENER_TIMEOUT = 5
 # Host of the ChordNode.
 NODE_HOST = "localhost"
-# Port of the ChordNode. 0 designates that a random port is chosen.
-LISTENER_PORT = 0
 # Maximum connections for listener
 LISTENER_MAX_CONN = 100
 # TCP receive buffer size
@@ -224,6 +222,11 @@ class PortCatalog:
     """
     Catalogs all of the possible port numbers in an encapsulated hash map.
     """
+    def __init__(self) -> None:
+        """
+        Constructor for the PortCatalog class.
+        """
+        self._node_map = self._generate_node_map()
 
     def _hash(self, value: Any) -> str:
         """
@@ -239,19 +242,34 @@ class PortCatalog:
         hashed_val = hashlib.sha1(encoded_val).hexdigest()
         return hashed_val
 
-    def determine_bucket(self, value: int, bucket_size: int = M) -> int:
+    def _generate_node_map(self) -> Dict[str, List[Tuple[str, int]]]:
         """
-        Determines the bucket position of the specified integer value.
-
-        Args:
-            value (int): Integer value to reference.
-            bucket_size (int, optional): The size of the bucket. Defaults to M.
-
+        Generates a hash table with the hash values mapped to possible node 
+        addresses.
         Returns:
-            int: The identified bucket.
+            Dict[str, List[Tuple[str, int]]]: The map of possible hash values
+                mapped to their respective node addresses.
         """
-        bucket_pos = value % (2 ** bucket_size)
-        return bucket_pos
+        node_map: Dict[str, List[Tuple[str, int]]] = {}
+
+        for port in range(1, POSSIBLE_PORTS):
+            address = (NODE_HOST, port)
+
+            hashed_val = self.get_bucket(address)
+
+            if hashed_val in node_map:
+                print(
+                    f"Cannot use {address} due to hash conflict with"
+                    f" {hashed_val}"
+                )
+            
+            else:
+                node_map[hashed_val] = address
+        
+        # Create new line after conflict information dump
+        print()
+
+        return node_map
 
     def get_bucket(self, value: str, bucket_size: int = M) -> int:
         """
@@ -278,7 +296,7 @@ class PortCatalog:
         Returns:
             Tuple[str, int]: Host and port of the Node.
         """
-        return NODE_HOST, BASE_PORT + node_id 
+        return self._node_map[node_id]
 
 
 class ChordNode(object):
@@ -286,29 +304,22 @@ class ChordNode(object):
     Represents a Node in the Chord network.
     """
 
-    def __init__(self, existing_port_num: int, id: int) -> None:
+    def __init__(self, port: int) -> None:
         """
         Constructor for the ChordNode class.
 
         Args:
-            existing_port_num (int): The port number of an existing node, or 0
-                to start a new network.
+            port (int): The port number that this ChordNode will listen on.
         """
-        self._host: str = None
-        self._port: int = None
-        self._server: socket.socket = None
+        self._port = port
         self._port_catalog = PortCatalog()
-        self._id = self._port_catalog.determine_bucket(id)
-
-        self._start_server()
+        self._id = self._port_catalog.get_bucket((NODE_HOST, port))
 
         self._finger = [None] + [
             FingerEntry(self._id, k) for k in range(1, M+1)
         ] # indexing starts at 1
         self._predecessor = None
         self._keys = {}
-
-        threading.Thread(target=self._join, args=(existing_port_num,)).start()
     
     def __repr__(self) -> str:
         """
@@ -317,11 +328,13 @@ class ChordNode(object):
         Returns:
             str: string representation of this ChordNode
         """
-        keys = "{" + ','.join(self._keys.keys()) + "}"
+        keys = "{" + ','.join(
+            str(key) for key in self._keys.keys()
+        ) + "}"
 
         fingers = ''.join(
             [
-                "\t\t{:>5} {:>12} {:>5} \n".format(
+                "\t\t{:>10} {:>22} {:>10} \n".format(
                     self._finger[idx].start,
                     f"[{self._finger[idx].interval.start},{self._finger[idx].interval.stop})",
                     self._finger[idx].node
@@ -335,7 +348,7 @@ class ChordNode(object):
             "\t\tpredecessor: {}\n"
             "\t\tkeys: {}\n"
             "\t\tfinger table:\n"
-            "\t\t{:>5} {:>12} {:>5}\n"
+            "\t\t{:>10} {:>22} {:>10}\n"
             "{}"
         )
 
@@ -383,6 +396,40 @@ class ChordNode(object):
             id (int): Identifier of the new successor node.
         """
         self._finger[1].node = id
+
+    def _send_rpc(
+        self, host: str, port: int, method_name: str, arg1: Any, arg2: Any
+    ) -> Any:
+        """
+        Creates a TCP/IP connection to submit a RPC.
+
+        Args
+            host (int): The host name of the server to communicate with.
+            port (int): The port number name of the server to communicate with.
+            method_name (str): Name of the rpc method to invoke.
+            arg1 (Any): 1st positional argument to supply to the rpc call.
+            arg2 (Any): 2nd positional argument to supply to the rpc call.
+
+        Raises:
+            ConnectionRefusedError: If the host and port combination cannot
+                be connected to.
+            TimeoutError: If the operation times out.
+
+        Returns:
+            Any: Response recieved from target server.
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Establish connection with target server
+            s.connect((host, port))
+            
+            # Convert message into bit stream and send to target server
+            msg_bits = pickle.dumps((method_name, arg1, arg2))
+            s.sendall(msg_bits)
+            
+            # Retrieve and unpickle data
+            data = s.recv(TCP_BUFFER_SIZE)
+            response = pickle.loads(data)
+            return response
     
     def _call_rpc(
         self, node_id: int, method_name: str, arg1: Any=None, arg2: Any=None
@@ -394,8 +441,10 @@ class ChordNode(object):
         Args
             node_id (int): The identifier of the destination Node.
             method_name (str): Name of the rpc method to invoke.
-            arg1 (Any): 1st positional argument to supply to the rpc call.
+            arg1 (Any): 1st positional argument to supply to the rpc call. 
+                Defaults to None.
             arg2 (Any): 2nd positional argument to supply to the rpc call.
+                Defaults to None.
 
         Raises:
             ConnectionRefusedError: If the host and port combination cannot
@@ -410,36 +459,7 @@ class ChordNode(object):
         
         host, port = self._port_catalog.lookup_node(node_id)
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            # Establish connection with target server
-
-            s.settimeout(DEFAULT_TIMEOUT)
-            s.connect((host, port))
-            
-            # Convert message into bit stream and send to target server
-            msg_bits = pickle.dumps((method_name, arg1, arg2))
-            s.sendall(msg_bits)
-            
-            # Retrieve and unpickle data
-            data = s.recv(TCP_BUFFER_SIZE)
-            response = pickle.loads(data)
-            return response
-
-    def _start_server(self) -> socket.socket:
-        """
-        Starts a listener socket on a random port and sets the encapsulated
-        host, port, and server socket values.
-        """
-        listener_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener_sock.bind((NODE_HOST, BASE_PORT + self._id))
-        listener_sock.listen(LISTENER_MAX_CONN)
-        listener_sock.setblocking(True)
-
-        self._host, self._port = listener_sock.getsockname()
-        self._server = listener_sock
-        print(
-            f"node={self._id} started listender at {self._host}:{self._port}"
-        )
+        return self._send_rpc(host, port, method_name, arg1, arg2)
 
     def find_predecessor(self, node_id: int) -> str:
         """
@@ -491,19 +511,19 @@ class ChordNode(object):
                 
         return self._id
 
-    def _join(self, node_port: int) -> None:
+    def _join(self, chord_port: int) -> None:
         """
         Requests for the specified node to join the chord network.
 
         Args:
-            node_port (int): The port number of an existing node, or 0 to start
+            chord_port (int): The port number of an existing node, or 0 to start
                 a new network.
         """
-        node_id = self._port_catalog.determine_bucket(BASE_PORT - node_port)
+        node_id = self._port_catalog.get_bucket((NODE_HOST, chord_port))
         print(f"{self._id}.join({node_id})")
 
         # Indicates joining into an existing Chord network
-        if node_port != 0:
+        if chord_port != 0:
             self._call_rpc(self._id, "init_finger_table", node_id)
             self._call_rpc(self._id, "update_others")
 
@@ -594,11 +614,11 @@ class ChordNode(object):
 
         # Indiciates that the key should be stored locally
         if node_id in ModRange(self.predecessor, self._id+1, NODES):
-            self._keys[key] = value
+            self._keys[node_id] = value
             return
         else:
             succ_id = self._call_rpc(self._id, "find_successor", node_id)
-            self._call_rpc(succ_id, "sotre_value", key, value)
+            self._call_rpc(succ_id, "store_value", key, value)
 
     def get_value(self, key: Any) -> Any:
         """
@@ -610,18 +630,17 @@ class ChordNode(object):
         Returns:
             Any: The value mapped to the sought key.
         """
-        # Search locally first
-        if key in self._keys:
-            return self._keys[key]
-        else:
-            node_id = self._port_catalog.get_bucket(key)
+        node_id = self._port_catalog.get_bucket(key)
 
-            # Indiciates that key is not found
-            if node_id in ModRange(self.predecessor, self._id+1, NODES):
-                return None
-            else:
-                succ_id = self._call_rpc(self._id, "find_successor", node_id)
-                return self._call_rpc(succ_id, "get_value", key)
+        # Search locally first
+        if node_id in self._keys:
+            return self._keys[node_id]
+        # Indiciates that key is not found
+        elif node_id in ModRange(self.predecessor, self._id+1, NODES):
+            return None
+        else:
+            succ_id = self._call_rpc(self._id, "find_successor", node_id)
+            return self._call_rpc(succ_id, "get_value", key)
 
     def _dispatch_rpc(
         self, method_name: str, arg1: Any, arg2: Any
@@ -700,13 +719,38 @@ class ChordNode(object):
         
         client.sendall(pickle.dumps(result))
 
-    def run(self) -> None:
+    def _accept_conns(self, server: socket.socket) -> None:
         """
-        Handles requests from the client.
+        Accepts and handles incoming connections to the listener socket.
+
+        Args:
+            server (socket.socket): Socket for listening for incoming 
+                connections.
         """
         while True:
-            client, _ = self._server.accept()
-            threading.Thread(target=self._handle_rpc, args=(client,)).start()
+            try:
+                client, _ = server.accept()
+                threading.Thread(target=self._handle_rpc, args=(client,)).start()
+            except socket.timeout:
+                print(self)
+
+    def run(self, existing_chord_port: int) -> None:
+        """
+        Handles requests from the client.
+
+        Args:
+            existing_chord_port (int): The port number of an existing node, or 
+                0 to start a new network.
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.settimeout(LISTENER_TIMEOUT)
+            server.bind((NODE_HOST, self._port))
+            server.listen(LISTENER_MAX_CONN)
+
+            # Join Chord network
+            threading.Thread(target=self._join, args=(existing_chord_port,)).start()
+
+            self._accept_conns(server)
 
 
 if __name__ == "__main__":
@@ -717,7 +761,7 @@ if __name__ == "__main__":
     python3 chord_node.py --help
 
     To run the program, execute the following:
-    python3 chord_node.py $NODE_PORT $NODE_ID
+    python3 chord_node.py $NODE_PORT $CHORD_PORT
     """
     parser = ArgumentParser(
         description=(
@@ -725,7 +769,7 @@ if __name__ == "__main__":
         )
     )
     parser.add_argument(
-        "port",
+        "node_port",
         type=int,
         help=(
             "The port number of an existing node, or 0 to start a new"
@@ -733,7 +777,7 @@ if __name__ == "__main__":
         )
     )
     parser.add_argument(
-        "id",
+        "chord_port",
         type=int,
         help=(
             "The identifier (offset from base port) of the node."
@@ -743,6 +787,6 @@ if __name__ == "__main__":
     parsed_args = parser.parse_args()
 
     # Initialize a Chord node
-    node = ChordNode(parsed_args.port, parsed_args.id)
+    node = ChordNode(parsed_args.node_port)
     # Listen for incoming connections from other nodes or queriers
-    node.run()
+    node.run(parsed_args.chord_port)
