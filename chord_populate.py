@@ -8,7 +8,7 @@ from argparse import ArgumentParser
 from csv import DictReader
 import pickle
 import socket
-from typing import Any, Dict, NamedTuple
+from typing import Any, Dict, Tuple
 
 
 # Name of the CSV column containing the player identifier
@@ -23,17 +23,6 @@ DEFAULT_TIMEOUT = 1.5
 NODE_HOST = "localhost"
 
 
-class ChordKey(NamedTuple):
-    """
-    Named tuple that represents the key for a given passing statistic record.
-    """
-
-    # The identifier of the player for the career passing statistic.
-    player_id: str
-    # The year in which the passing statistic was recorded.
-    year: int
-
-
 class ChordPopulator:
 
     def __init__(self, fpath: str) -> None:
@@ -45,7 +34,7 @@ class ChordPopulator:
         """
         self._records = self._read_csv(fpath)
 
-    def _read_csv(self, fpath: str) -> Dict[ChordKey, Dict[str, Any]]:
+    def _read_csv(self, fpath: str) -> Dict[Tuple[str, int], Dict[str, Any]]:
         """
         Parses the specified CSV and retrieve the identified records.
 
@@ -53,15 +42,15 @@ class ChordPopulator:
             fpath (str): File path of the file to parse.
 
         Returns:
-            Dict[ChordKey, Dict[str, Any]]: Identified records.
+            Dict[Tuple[str, int], Dict[str, Any]]: Identified records.
         """
-        records: Dict[ChordKey, Dict[str, Any]] = {}
+        records: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
         with open(fpath, newline='') as csvfile:
             reader = DictReader(csvfile)
             
             for row in reader:
-                chord_key = ChordKey(
+                chord_key = (
                     row[COL_PLAYER_ID], row[COL_YEAR]
                 )
                 records[chord_key] = row
@@ -113,7 +102,7 @@ class ChordPopulator:
         for key, value in self._records.items():
             try:
                 # Save the key, value pair in the specified Node
-                self._call_rpc(port, "store_value", tuple(key), value)
+                self._call_rpc(port, "store_value", key, value)
 
             except ConnectionRefusedError as e:
                 print(f"Failed to connect: {e}")
