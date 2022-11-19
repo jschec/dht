@@ -11,6 +11,7 @@ import hashlib
 import pickle
 import socket
 import threading
+import time
 from typing import Any, Dict, List, Tuple
 
 
@@ -242,15 +243,16 @@ class PortCatalog:
         hashed_val = hashlib.sha1(encoded_val).hexdigest()
         return hashed_val
 
-    def _generate_node_map(self) -> Dict[str, List[Tuple[str, int]]]:
+    def _generate_node_map(self) -> Dict[int, List[Tuple[str, int]]]:
         """
         Generates a hash table with the hash values mapped to possible node 
         addresses.
+
         Returns:
-            Dict[str, List[Tuple[str, int]]]: The map of possible hash values
+            Dict[int, List[Tuple[str, int]]]: The map of possible hash values
                 mapped to their respective node addresses.
         """
-        node_map: Dict[str, List[Tuple[str, int]]] = {}
+        node_map: Dict[int, List[Tuple[str, int]]] = {}
 
         for port in range(1, POSSIBLE_PORTS):
             address = (NODE_HOST, port)
@@ -337,7 +339,7 @@ class ChordNode(object):
                 "\t\t{:>10} {:>22} {:>10} \n".format(
                     self._finger[idx].start,
                     f"[{self._finger[idx].interval.start},{self._finger[idx].interval.stop})",
-                    self._finger[idx].node
+                    self._finger[idx].node if self._finger[idx].node is not None else ""
                 )
                 for idx in range(1, M+1)
             ]
@@ -474,7 +476,7 @@ class ChordNode(object):
         pred_id = self._id
 
         while node_id not in ModRange(
-            pred_id + 1, self._call_rpc(pred_id, "successor") + 1, NODES
+            pred_id+1, self._call_rpc(pred_id, "successor")+1, NODES
         ):
             pred_id = self._call_rpc(
                 pred_id, "closest_preceding_finger", node_id
@@ -482,7 +484,7 @@ class ChordNode(object):
 
         return pred_id
 
-    def find_successor(self, node_id: str) -> str:
+    def find_successor(self, node_id: str) -> int:
         """
         Requests the successor of an arbitrary node. 
 
@@ -495,7 +497,7 @@ class ChordNode(object):
         pred_id = self.find_predecessor(node_id)
         return self._call_rpc(pred_id, "successor")
 
-    def closest_preceding_finger(self, node_id: int) -> str:
+    def closest_preceding_finger(self, node_id: int) -> int:
         """
         Retrieves the closest finger proceding the specified identifier.
 
@@ -503,10 +505,10 @@ class ChordNode(object):
             node_id (int): Identifier of an arbitrary node.
 
         Returns:
-            id: Closest finger preceding identifier.
+            int: Closest finger preceding identifier.
         """
         for idx in range(M, 0, -1):
-            if self._finger[idx].node in ModRange(self._id, node_id, NODES):
+            if self._finger[idx].node in ModRange(self._id+1, node_id, NODES):
                 return self._finger[idx].node
                 
         return self._id
@@ -521,6 +523,9 @@ class ChordNode(object):
         """
         node_id = self._port_catalog.get_bucket((NODE_HOST, chord_port))
         print(f"{self._id}.join({node_id})")
+
+        # Delay to allow for listener socket to start
+        time.sleep(2)
 
         # Indicates joining into an existing Chord network
         if chord_port != 0:
@@ -747,6 +752,11 @@ class ChordNode(object):
             server.bind((NODE_HOST, self._port))
             server.listen(LISTENER_MAX_CONN)
 
+            print(
+                f"Node {self._id} started listener at "
+                f"{NODE_HOST}:{self._port}"
+            )
+
             # Join Chord network
             threading.Thread(target=self._join, args=(existing_chord_port,)).start()
 
@@ -772,15 +782,15 @@ if __name__ == "__main__":
         "node_port",
         type=int,
         help=(
-            "The port number of an existing node, or 0 to start a new"
-            " network."
+            "The port number to start a listener on for this Node"
         )
     )
     parser.add_argument(
         "chord_port",
         type=int,
         help=(
-            "The identifier (offset from base port) of the node."
+            "The port number of an existing node in the Chord network, or 0"
+            " to start a new network."
         )
     )
 
