@@ -75,9 +75,10 @@ class ChordQuery:
         # Retrieve the value mapped to the specified key
         response = self._call_rpc(self._port, "get_value", key)
 
-        #TODO
-        print("The Chord Network responded with: ")
-        print(response)
+        if response is None:
+            print("The key could not be found")
+        else:
+            print(response)
 
 
 if __name__ == "__main__":
@@ -102,7 +103,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "player_id",
-        type=int,
+        type=str,
         help=(
             "The player identifier in the sought key to query the Chord"
             "network for."
@@ -110,7 +111,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "year",
-        type=int,
+        type=str,
         help=(
             "The year in the sought key to query the Chord network for."
         )
