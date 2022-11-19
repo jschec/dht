@@ -1,14 +1,20 @@
+"""
+Module defining the ChordNode, FingerEntry, ModRange, ModRangeIter 
+and PortCatalog classes.
+
+Authors: Joshua Scheck
+Version: 2022-11-13
+"""
 from __future__ import annotations
 from argparse import ArgumentParser
 import hashlib
 import pickle
 import socket
 import threading
-from typing import Any, Dict, List, Tuple
+from typing import Any, Tuple
 
 # m-bit identifier
 M = 5
-#FIXME M = hashlib.sha1().digest_size * 8
 # Maximum number of nodes in Chord network
 NODES = 2 ** M
 # Default timeout for socket connection in seconds
@@ -38,8 +44,8 @@ class ModRangeIter(object):
 
         Args:
             mr (ModRange): Reference ModRange Object to iterate through.
-            i (int): TODO
-            j (int): TODO
+            i (int): The start of the interval.
+            j (int): The end of the interval.
         """
         self.mr = mr
         self.i = i
@@ -47,14 +53,23 @@ class ModRangeIter(object):
 
     def __iter__(self) -> ModRangeIter:
         """
-        Iterator for referenced ModRange Object.
+        Retrieves the terator for referenced ModRange Object.
 
         Returns:
-            ModRangeIter: _description_
+            ModRangeIter: Iterator for the referenced ModRange Object.
         """
         return ModRangeIter(self.mr, self.i, self.j)
 
     def __next__(self) -> int:
+        """
+        Retrieves the next item in this iterator. 
+
+        Raises:
+            StopIteration: If there is no next item.
+
+        Returns:
+            int: The next value in this iterator.
+        """
         if self.j == len(self.mr.intervals[self.i]) - 1:
             if self.i == len(self.mr.intervals) - 1:
                 raise StopIteration()
@@ -91,14 +106,15 @@ class ModRange(object):
         The constructor for the ModRange class.
 
         Args:
-            start (int): TODO
-            stop (int): TODO
-            divisor (int): TODO
+            start (int): The specified start interval.
+            stop (int): The specified stop interval. 
+            divisor (int): Divisor to apply against the intervals.
         """
         self.divisor = divisor
         self.start = start % self.divisor
         self.stop = stop % self.divisor
-        # we want to use ranges to make things speedy, but if it wraps around the 0 node, we have to use two
+        # we want to use ranges to make things speedy, but if it wraps around 
+        # the 0 node, we have to use two
         if self.start < self.stop:
             self.intervals = (range(self.start, self.stop),)
         elif self.stop == 0:
@@ -142,10 +158,10 @@ class ModRange(object):
 
     def __iter__(self) -> ModRangeIter:
         """
-        TODO
+        Retrieves an iterator for this Object.
 
         Returns:
-            ModRangeIter: TODO
+            ModRangeIter: Iterator for this Object.
         """
         return ModRangeIter(self, 0, -1)
 
@@ -175,8 +191,8 @@ class FingerEntry(object):
         Constructor for the FingerEntry class.
 
         Args:
-            n (int): TODO
-            k (int): TODO
+            n (int): The index of a Node in the Chord network.
+            k (int): The index of the successor of the referenced Node.
             node (int, optional): The identifier of the node stored in the 
                 entry. Defaults to None.
 
@@ -191,10 +207,6 @@ class FingerEntry(object):
         self.next_start = (n + 2**k) % NODES if k < M else n
         self.interval = ModRange(self.start, self.next_start, NODES)
         self.node = node
-
-    def __repr__(self) -> str:
-        """ Something like the interval|node charts in the paper """
-        return '<finger [{},{}): {}>'.format(self.start, self.next_start, self.node)
 
     def __contains__(self, node_id: int) -> bool:
         """
@@ -212,13 +224,6 @@ class PortCatalog:
     Catalogs all of the possible port numbers in an encapsulated hash map.
     """
 
-    def __init__(self) -> None:
-        """
-        Constructor for the PortCatalog class.
-        """
-        self._not_allowed_ports = []
-        #self._node_map = self._generate_node_map()
-
     def _hash(self, value: Any) -> str:
         """
         Generates a hash value for the specified node address.
@@ -233,25 +238,13 @@ class PortCatalog:
         hashed_val = hashlib.sha1(encoded_val).hexdigest()
         return hashed_val
 
-    def port_is_allowed(self, port_num: int) -> bool:
-        """
-        Determines if the specified port number is allowed.
-
-        Args:
-            port_num (int): Port number to check.
-
-        Returns:
-            bool: True if the port number is allowed, otherwise False.
-        """
-        return port_num not in self._not_allowed_ports
-
     def determine_bucket(self, value: int, bucket_size: int = M) -> int:
         """
-        Determines the bucket position of the specified value.
+        Determines the bucket position of the specified integer value.
 
         Args:
             value (int): Integer value to reference.
-            bucket_size (int, optional): The size of the bucket. Defaults to NODES.
+            bucket_size (int, optional): The size of the bucket. Defaults to M.
 
         Returns:
             int: The identified bucket.
@@ -265,7 +258,7 @@ class PortCatalog:
 
         Args:
             value (str): The value to hash.
-            bucket_size (int): The size of the bucket. Defaults to M.
+            bucket_size (int, optional): The size of the bucket. Defaults to M.
 
         Returns:
             int: The identified bucket.
@@ -273,31 +266,6 @@ class PortCatalog:
         hashed_val = self._hash(value)
         id = int(hashed_val, 16) % (2 ** bucket_size)
         return id
-
-    def _generate_node_map(self) -> Dict[str, List[Tuple[str, int]]]:
-        """
-        Generates a hash table with the hash values mapped to possible node 
-        addresses.
-
-        Returns:
-            Dict[str, List[Tuple[str, int]]]: The map of possible hash values
-                mapped to their respective node addresses.
-        """
-        node_map: Dict[str, List[Tuple[str, int]]] = {}
-
-        for port in range(1, POSSIBLE_PORTS):
-            address = (NODE_HOST, port)
-
-            hashed_val = self.get_bucket(address)
-
-            if hashed_val in node_map:
-                self._not_allowed_ports.append(port)
-                print('cannot use', address, 'hash conflict', hashed_val)
-            
-            else:
-                node_map[hashed_val] = address
-
-        return node_map
 
     def lookup_node(self, node_id: str) -> Tuple[str, int]:
         """
@@ -309,11 +277,13 @@ class PortCatalog:
         Returns:
             Tuple[str, int]: Host and port of the Node.
         """
-        #return self._node_map[node_id]
         return NODE_HOST, BASE_PORT + node_id 
 
 
 class ChordNode(object):
+    """
+    Represents a Node in the Chord network.
+    """
 
     def __init__(self, existing_port_num: int, id: int) -> None:
         """
@@ -328,7 +298,6 @@ class ChordNode(object):
         self._server: socket.socket = None
         self._port_catalog = PortCatalog()
         self._id = self._port_catalog.determine_bucket(id)
-        #self._id = self._port_catalog.get_bucket((NODE_HOST, self._port))
 
         self._start_server()
 
@@ -351,8 +320,10 @@ class ChordNode(object):
 
         fingers = ''.join(
             [
-                "\t\t{:>5} {:>5} \n".format(
-                    self._finger[idx].start, self._finger[idx].node
+                "\t\t{:>5} {:>12} {:>5} \n".format(
+                    self._finger[idx].start,
+                    f"[{self._finger[idx].interval.start},{self._finger[idx].interval.stop})",
+                    self._finger[idx].node
                 )
                 for idx in range(1, M+1)
             ]
@@ -363,12 +334,13 @@ class ChordNode(object):
             "\t\tpredecessor: {}\n"
             "\t\tkeys: {}\n"
             "\t\tfinger table:\n"
-            "\t\t{:>5} {:>5}\n"
+            "\t\t{:>5} {:>12} {:>5}\n"
             "{}"
         )
 
         return representation.format(
-            self._id, self._predecessor, keys, "start", "end", fingers
+            self._id, self._predecessor, keys, "start", "interval", "node", 
+            fingers
         )
 
     @property
@@ -558,7 +530,7 @@ class ChordNode(object):
         
         self._call_rpc(self.successor, "predecessor", self._id)
 
-        for idx in range(1, M): #SHould this only be M?
+        for idx in range(1, M):
             if self._finger[idx+1].start\
                 in ModRange(self._id, self._finger[idx].node, NODES):
                 
@@ -571,30 +543,43 @@ class ChordNode(object):
 
     def _update_others(self) -> None:
         """
-        Update all other node that should have this node in their finger tables
+        Update all other node that should have this node in their finger 
+        tables.
         """
-        # find last node p whose i-th finger might be this node
+        # Find last node pred_id whose idx-th finger might be this node
         for idx in range(1, M+1):  
             
-            # FIXME: bug in paper, have to add the 1 +
-            pred_id = self.find_predecessor((1 + self._id - 2**(idx-1) + NODES) % NODES)
+            pred_id = self.find_predecessor(
+                (1 + self._id - 2**(idx-1) + NODES) % NODES
+            )
 
             self._call_rpc(pred_id, "update_finger_table", self._id, idx)
 
-    # TODO - clean up
-    def update_finger_table(self, s, idx: int) -> str:
-        """ if s is i-th finger of n, update this node's finger table with s """
-        # FIXME: don't want e.g. [1, 1) which is the whole circle
+    def update_finger_table(self, node_id: int, idx: int) -> str:
+        """
+        If node_id is idx-th finger of this node, update this node's finger 
+        table with node_id.
+
+        Args:
+            node_id (int): The identifier of an arbitrary node.
+            idx (int): Index in finger table.
+
+        Returns:
+            str: Representation of finger table changes.
+        """
         if (self._finger[idx].start != self._finger[idx].node
-                 # FIXME: bug in paper, [.start
-                 and s in ModRange(self._finger[idx].start, self._finger[idx].node, NODES)):
+                 and node_id in ModRange(
+                    self._finger[idx].start, self._finger[idx].node, NODES
+                )
+            ):
+            self._finger[idx].node = node_id
             
-            self._finger[idx].node = s
-            
-            self._call_rpc(self._predecessor, 'update_finger_table', s, idx)
+            self._call_rpc(
+                self._predecessor, 'update_finger_table', node_id, idx
+            )
             return str(self)
         else:
-            return 'did nothing {}'.format(self)
+            return "did nothing {}".format(self)
 
     def _dispatch_rpc(
         self, method_name: str, arg1: Any, arg2: Any
@@ -691,7 +676,7 @@ if __name__ == "__main__":
     python3 chord_node.py --help
 
     To run the program, execute the following:
-    python3 chord_node.py $NODE_PORT
+    python3 chord_node.py $NODE_PORT $NODE_ID
     """
     parser = ArgumentParser(
         description=(
