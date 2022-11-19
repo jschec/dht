@@ -13,6 +13,7 @@ import socket
 import threading
 from typing import Any, Tuple
 
+
 # m-bit identifier
 M = 5
 # Maximum number of nodes in Chord network
@@ -29,7 +30,7 @@ LISTENER_MAX_CONN = 100
 TCP_BUFFER_SIZE = 4096
 # The range of possible port numbers from 0 to 2^16
 POSSIBLE_PORTS = 2 ** 16
-
+# The base port number that the ChordNetwork nodes start with
 BASE_PORT = 60000
 
 
@@ -515,7 +516,7 @@ class ChordNode(object):
             
             print(f"{self._id} Initialized Chord Network")
 
-    def _init_finger_table(self, node_id: int) -> None:
+    def init_finger_table(self, node_id: int) -> None:
         """
         Initializes the finger table of this ChordNode.
 
@@ -541,7 +542,7 @@ class ChordNode(object):
                     node_id, "find_successor", self._finger[idx+1].start
                 )
 
-    def _update_others(self) -> None:
+    def update_others(self) -> None:
         """
         Update all other node that should have this node in their finger 
         tables.
@@ -580,6 +581,47 @@ class ChordNode(object):
             return str(self)
         else:
             return "did nothing {}".format(self)
+
+    def store_value(self, key: Any, value: Any) -> None:
+        """
+        Stores the specified key, value pair in the Chord network.
+
+        Args:
+            key (Any): They key to store in the network.
+            value (Any): The value to map to the specified key.
+        """
+        node_id = self._port_catalog.get_bucket(key)
+
+        # Indiciates that the key should be stored locally
+        if node_id in ModRange(self.predecessor, self._id+1, NODES):
+            self._keys[key] = value
+            return
+        else:
+            succ_id = self._call_rpc(self._id, "find_successor", node_id)
+            self._call_rpc(succ_id, "sotre_value", key, value)
+
+    def get_value(self, key: Any) -> Any:
+        """
+        Retrieves the value for the sought key from the Chord network.
+
+        Args:
+            key (Any): They key to search for in the network.
+
+        Returns:
+            Any: The value mapped to the sought key.
+        """
+        # Search locally first
+        if key in self._keys:
+            return self._keys[key]
+        else:
+            node_id = self._port_catalog.get_bucket(key)
+
+            # Indiciates that key is not found
+            if node_id in ModRange(self.predecessor, self._id+1, NODES):
+                return None
+            else:
+                succ_id = self._call_rpc(self._id, "find_successor", node_id)
+                return self._call_rpc(succ_id, "get_value", key)
 
     def _dispatch_rpc(
         self, method_name: str, arg1: Any, arg2: Any
@@ -621,9 +663,9 @@ class ChordNode(object):
         elif method_name == "find_successor" and arg2 is None:
             result = self.find_successor(arg1)
         elif method_name == "init_finger_table":
-            result = self._init_finger_table(arg1)
+            result = self.init_finger_table(arg1)
         elif method_name == "update_others":
-            result = self._update_others() 
+            result = self.update_others() 
         elif method_name == "update_finger_table":
             result = self.update_finger_table(arg1, arg2)
         elif method_name == "update_finger_table":
@@ -631,10 +673,9 @@ class ChordNode(object):
         elif method_name == "closest_preceding_finger":
             result = self.closest_preceding_finger(arg1)
         elif method_name == "store_value":
-            self._keys[arg1] = arg2
-            result = None
+            result = self.store_value(arg1, arg2)
         elif method_name == "get_value":
-            result = self._keys.get(arg1, None)
+            result = self.get_value(arg1)
         else:
             raise ValueError(
                 f"The specified method invocation {method_name}(arg1, arg2) is"
