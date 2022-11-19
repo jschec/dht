@@ -7,7 +7,7 @@ import threading
 from typing import Any, Dict, List, Tuple
 
 # m-bit identifier
-M = 7
+M = hashlib.sha1().digest_size * 8
 # Maximum number of nodes in Chord network
 NODES = 2 ** M
 # Default timeout for socket connection in seconds
@@ -45,7 +45,7 @@ class ModRangeIter(object):
     def __iter__(self) -> ModRangeIter:
         return ModRangeIter(self.mr, self.i, self.j)
 
-    def __next__(self):
+    def __next__(self) -> int:
         if self.j == len(self.mr.intervals[self.i]) - 1:
             if self.i == len(self.mr.intervals) - 1:
                 raise StopIteration()
@@ -197,6 +197,97 @@ class FingerEntry(object):
         return node_id in self.interval
 
 
+class PortCatalog:
+    """
+    Catalogs all of the possible port numbers in an encapsulated hash map.
+    """
+
+    def __init__(self) -> None:
+        """
+        Constructor for the PortCatalog class.
+        """
+        self._not_allowed_ports = []
+        self._node_map = self._generate_node_map()
+
+    def _hash(self, value: Any) -> str:
+        """
+        Generates a hash value for the specified node address.
+
+        Args:
+            value (Any): The value to hash.
+
+        Returns:
+            str: The resulting hashed value.
+        """
+        encoded_val = pickle.dumps(value)
+        hashed_val = hashlib.sha1(encoded_val).hexdigest()
+        return hashed_val
+
+    def port_is_allowed(self, port_num: int) -> bool:
+        """
+        Determines if the specified port number is allowed.
+
+        Args:
+            port_num (int): Port number to check.
+
+        Returns:
+            bool: True if the port number is allowed, otherwise False.
+        """
+        return port_num not in self._not_allowed_ports
+
+    def get_bucket(self, value: str, bucket_size: int = M) -> int:
+        """
+        Retrieves the bucket for the specified hash value.
+
+        Args:
+            value (str): The value to hash.
+            bucket_size (int): The size of the bucket. Defaults to M.
+
+        Returns:
+            int: The identified bucket.
+        """
+        hashed_val = self._hash(value)
+        id = int(hashed_val, 16) % (2 ** bucket_size)
+        return id
+
+    def _generate_node_map(self) -> Dict[str, List[Tuple[str, int]]]:
+        """
+        Generates a hash table with the hash values mapped to possible node 
+        addresses.
+
+        Returns:
+            Dict[str, List[Tuple[str, int]]]: The map of possible hash values
+                mapped to their respective node addresses.
+        """
+        node_map: Dict[str, List[Tuple[str, int]]] = {}
+
+        for port in range(1, POSSIBLE_PORTS):
+            address = (NODE_HOST, port)
+
+            hashed_val = self.get_bucket(address)
+
+            if hashed_val in node_map:
+                self._not_allowed_ports.append(port)
+                print('cannot use', address, 'hash conflict', hashed_val)
+            
+            else:
+                node_map[hashed_val] = address
+
+        return node_map
+
+    def lookup_node(self, node_hash: str) -> Tuple[str, int]:
+        """
+        Retrieves the address of the sought Node.
+
+        Args:
+            node_hash (node_hash): Hash identifier of the sought Node.
+
+        Returns:
+            Tuple[str, int]: Host and port of the Node.
+        """
+        return self._node_map[node_hash]
+
+
 class ChordNode(object):
 
     def __init__(self, existing_port_num: int) -> None:
@@ -207,75 +298,22 @@ class ChordNode(object):
             existing_port_num (int): The port number of an existing node, or 0
                 to start a new network.
         """
-        self._node_map = self._generate_node_map()
-        self._existing_port = existing_port_num
-
         self._host: str = None
         self._port: int = None
         self._server: socket.socket = None
+        self._port_catalog = PortCatalog()
 
         self._start_server()
 
-        self._id = self._hash(f"{NODE_HOST}:{self._port}", M)
+        self._id = self._port_catalog.get_bucket((NODE_HOST, self._port))
+
         self._finger = [None] + [
             FingerEntry(self._id, k) for k in range(1, M+1)
         ] # indexing starts at 1
         self._predecessor = None
         self._keys = {}
 
-        self._join()
-
-    def _hash(self, value: str, bucket_size: int) -> int:
-        """
-        Generates a hash value for the specified node address.
-
-        Args:
-            address (str): The value to hash.
-            bucket_size (int): The size of the bucket.
-
-        Returns:
-            int: The resulting index.
-        """
-        encoded_val = value.encode("utf-8")
-        hash_val = hashlib.sha1(encoded_val).hexdigest()
-
-        idx = int(hash_val, 16) % (2 ** bucket_size)
-
-        return idx
-
-    def _generate_node_map(self) -> Dict[str, List[Tuple[str, int]]]:
-        """
-        Generates a hash table with the hash values mapped to 
-
-        Returns:
-            Dict[str, List[Tuple[str, int]]]: The map of possible hash values
-                mapped to their respective node addresses.
-        """
-        node_map: Dict[str, List[Tuple[str, int]]] = {}
-
-        for port in POSSIBLE_PORTS:
-            address = f"{NODE_HOST}:{port}"
-
-            hash_idx = self._hash(address, M)
-
-            if hash_idx in node_map:
-                print('cannot use', address, 'hash conflict', hash_idx)
-            else:
-                node_map[hash_idx] = (NODE_HOST, port)
-
-        return node_map
-
-    def _lookup_node(self, id: int) -> Tuple[str, int]:
-        """
-        Retrieves the address of the sought Node.
-
-        Args:
-            id (str): Hash identifier of the sought Node.
-
-        Returns:
-            Tuple[str, int]: Host and port of the Node.
-        """
-        return self._node_map[id]
+        self._join(existing_port_num)
 
     @property
     def predecessor(self) -> int:
@@ -288,14 +326,14 @@ class ChordNode(object):
         return self._predecessor
 
     @predecessor.setter
-    def predecessor(self, node_port: int) -> None:
+    def predecessor(self, id: int) -> None:
         """
         Assigns a new value to the predecessor of this ChordNode.
 
         Args:
-            node_port (int): TODO
+            id (int): Identifier of the new predecessor node.
         """
-        self._predecessor = node_port #FIXME
+        self._predecessor = id
 
     @property
     def successor(self) -> int:
@@ -303,17 +341,17 @@ class ChordNode(object):
         Retrieves the successor of this ChordNode.
 
         Returns:
-            int: The key of the successor node.
+            int: Identifier of the successor node.
         """
         return self._finger[1].node
 
     @successor.setter
     def successor(self, id: int) -> None:
         """
-        Assigns a new value to the 
+        Assigns a new value to the successor of this ChordNode.
 
         Args:
-            id (int): TODO
+            id (int): Identifier of the new successor node.
         """
         self._finger[1].node = id
     
@@ -338,13 +376,20 @@ class ChordNode(object):
         Returns:
             Any: Response recieved from target server.
         """
-        host, port = self._lookup_node(node_id)
+        print("Calling RPC: ", node_id, method_name, arg1, arg2)
+
+        if node_id == self._id:
+            val =  self._dispatch_rpc(method_name, arg1, arg2)
+            print(f"Returned {val}")
+            return val
+        
+        host, port = self._port_catalog.lookup_node(node_id)
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             # Establish connection with target server
-            print(method_name, (host, port), arg1, arg2)
+
             s.settimeout(DEFAULT_TIMEOUT)
-            s.connect((NODE_HOST, port))
+            s.connect((host, port))
             
             # Convert message into bit stream and send to target server
             msg_bits = pickle.dumps((method_name, arg1, arg2))
@@ -360,64 +405,78 @@ class ChordNode(object):
         Starts a listener socket on a random port and sets the encapsulated
         host, port, and server socket values.
         """
-        listener_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener_sock.bind((NODE_HOST, LISTENER_PORT))
-        listener_sock.listen(LISTENER_MAX_CONN)
-        listener_sock.setblocking(True)
-        listener_sock.settimeout(DEFAULT_TIMEOUT)
+        valid_listener_sock = False
 
-        self._host, self._port = listener_sock.getsockname()
-        self._server = listener_sock
+        while not valid_listener_sock:
+            print("Creating server")
+            listener_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener_sock.bind((NODE_HOST, LISTENER_PORT))
+            listener_sock.listen(LISTENER_MAX_CONN)
+            listener_sock.setblocking(True)
 
-        node_id = self._hash(f"{NODE_HOST}:{self._port}", M)
-        
+            host, port = listener_sock.getsockname()
+            
+            # Set port if stored in encapsulated catalog
+            if self._port_catalog.port_is_allowed(port):
+                print(f"Port {port} is valid")
+                self._host = host
+                self._port = port
+                self._server = listener_sock
+                valid_listener_sock = True  
+            else:
+                print(f"Port {port} is NOT valid")
+                listener_sock.close()  
+            
+        node_id = self._port_catalog.get_bucket((NODE_HOST, self._port))
+
         print(
-            f"Started listener for {node_id} at {self._host}:{self._port}"
+            f"Started listener for id={node_id} at {self._host}:{self._port}"
         )
 
-    def find_predecessor(self, node_id: int) -> int:
+    def find_predecessor(self, node_id: int) -> str:
         """
         Retrieves the identifier of the predecessor node.
 
         Args:
-            node_id (int): The identifier of an arbitrary node.
+            node_id (int): Identifier of an arbitrary node.
 
         Returns:
             int: The identifier of the predecessor node.
         """
-        predecessor_id = self._id
-        successor_id = self._call_rpc(node_id, "successor")
+        pred_id = self._id
 
-        while node_id not in ModRange(predecessor_id, successor_id, NODES):
-            predecessor_id = self._call_rpc(
-                predecessor_id, "closest_preceding_finger", node_id
+        while node_id not in ModRange(
+            pred_id, self._call_rpc(pred_id, "successor"), NODES
+        ):
+            pred_id = self._call_rpc(
+                pred_id, "closest_preceding_finger", node_id
             )
 
-        return predecessor_id
+        return pred_id
 
-    def find_successor(self, node_id: int) -> int:
+    def find_successor(self, node_id: str) -> str:
         """
         Requests the successor of an arbitrary node. 
 
         Args:
-            node_id (int): The identifier of an arbitrary node.
+            node_id (int): Identifier of an arbitrary node.
 
         Returns:
             int: The identifier of the successor.
         """
-        predecessor_id = self.find_predecessor(node_id)
+        pred_id = self.find_predecessor(node_id)
         
-        return self._call_rpc(predecessor_id, "successor")
+        return self._call_rpc(pred_id, "successor")
 
-    def closest_preceding_finger(self, node_id: int) -> int:
+    def closest_preceding_finger(self, node_id: int) -> str:
         """
         Retrieves the closest finger proceding the specified identifier.
 
         Args:
-            node_id (int): The identifier of an arbitrary node.
+            node_id (int): Identifier of an arbitrary node.
 
         Returns:
-            int: TODO
+            id: Closest finger preceding identifier.
         """
         for idx in range(M, 1, -1):
             if self._finger[idx].node in ModRange(self._id, node_id, NODES):
@@ -470,6 +529,7 @@ class ChordNode(object):
                     node_id, "find_successor", self._finger[idx+1].start
                 )
 
+    # TODO - clean up
     def _update_others(self) -> None:
         """
         Update all other node that should have this node in their finger tables
@@ -482,6 +542,7 @@ class ChordNode(object):
 
             self._call_rpc(pred_id, "update_finger_table", self._id, idx)
 
+    # TODO - clean up
     def update_finger_table(self, s, idx: int) -> str:
         """ if s is i-th finger of n, update this node's finger table with s """
         # FIXME: don't want e.g. [1, 1) which is the whole circle
@@ -524,19 +585,16 @@ class ChordNode(object):
             self.predecessor = arg1
             return None
         elif method_name == "successor" and arg1 is None:
+            print("111", self.successor)
             return self.successor
         elif method_name == "successor" and arg1 is not None:
             self.successor = arg1
+            print("221")
             return None
         elif method_name == "find_predecessor":
             return self.find_predecessor(arg1)
         elif method_name == "find_successor" and arg2 is None:
             return self.find_successor(arg1)
-        elif method_name == "find_successor" and arg1 is not None and arg2 is not None:
-            # TODO - how to store data
-            node_id = self._hash(f"{arg1},{arg2}", M)
-            return self.find_successor(node_id)
-
         elif method_name == "update_finger_table":
             return self.update_finger_table(arg1, arg2)
         elif method_name == "closest_preceding_finger":
