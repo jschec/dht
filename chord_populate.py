@@ -6,10 +6,11 @@ Version: 2022-11-13
 """
 from argparse import ArgumentParser
 from csv import DictReader
-import hashlib
 import pickle
 import socket
-from typing import Any, List, NamedTuple
+from typing import Any, Dict
+
+from chord_node import PortCatalog
 
 
 # Name of the CSV column containing the player identifier
@@ -24,17 +25,6 @@ DEFAULT_TIMEOUT = 1.5
 NODE_HOST = "localhost"
 
 
-class ChordData(NamedTuple):
-    """
-    Named tuple that represents the key for a given passing statistic record.
-    """
-
-    # The identifier of the player for the career passing statistic.
-    player_id: str
-    # The year in which the passing statistic was recorded.
-    year: int
-
-
 class ChordPopulator:
 
     def __init__(self, fpath: str) -> None:
@@ -45,8 +35,9 @@ class ChordPopulator:
             fpath (str): File path of the file to parse.
         """
         self._records = self._read_csv(fpath)
+        self._port_catalog = PortCatalog()
 
-    def _read_csv(self, fpath: str) -> List[ChordData]:
+    def _read_csv(self, fpath: str) -> Dict[str, Dict[str, Any]]:
         """
         Parses the specified CSV and retrieve the identified records.
 
@@ -54,33 +45,20 @@ class ChordPopulator:
             fpath (str): File path of the file to parse.
 
         Returns:
-            List[ChordData]: Identified records.
+            Dict[ChordKey, Dict[str, Any]]: Identified records.
         """
-        records = []
+        records: Dict[str, Dict[str, Any]] = {}
 
         with open(fpath, newline='') as csvfile:
             reader = DictReader(csvfile)
             
             for row in reader:
-                records.append(
-                    ChordData(row[COL_PLAYER_ID], row[COL_YEAR])
+                chord_key = self._port_catalog.hash(
+                    (row[COL_PLAYER_ID], row[COL_YEAR])
                 )
+                records[chord_key] = row
 
         return records
-
-    def _hash(self, value: str) -> str:
-        """
-        Generates a hash value for the specified node address.
-
-        Args:
-            address (str): The value to hash.
-
-        Returns:
-            str: The resulting hashed value.
-        """
-        encoded_val = value.encode("utf-8")
-        hash_val = hashlib.sha1(encoded_val).hexdigest()
-        return hash_val
 
     def _call_rpc(
         self, port: int, method_name: str, arg1: Any=None, arg2: Any=None
@@ -124,17 +102,14 @@ class ChordPopulator:
         Args:
             port (int): Port number of an existing ChordNode.
         """
-        for player_id, year in self._records:
+        for key, value in self._records.items():
             try:
                 # Identify the Node for storing the key, value pair 
-                # TODO - should this return successor port?
-                successor_port = self._call_rpc(port, "find_successor")
-
-                key = self._hash(f"{player_id},{year}")
-                value = "" #FIXME
-
+                succ_hash = self._call_rpc(port, "find_successor")
+                # Retrieve port of the successor
+                succ_port = self._port_catalog.lookup_node(succ_hash)
                 # Save the key, value pair in the specified Node
-                self._call_rpc(successor_port, "store_value", key, value)
+                self._call_rpc(succ_port, "store_value", key, value)
 
             except ConnectionRefusedError as e:
                 print(f"Failed to connect: {e}")
