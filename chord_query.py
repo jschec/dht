@@ -5,10 +5,11 @@ Authors: Joshua Scheck
 Version: 2022-11-13
 """
 from argparse import ArgumentParser
-import hashlib
 import pickle
 import socket
 from typing import Any
+
+from chord_node import PortCatalog
 
 
 # TCP receive buffer size
@@ -29,20 +30,7 @@ class ChordQuery:
             port (int): Port number of an existing ChordNode.
         """
         self._port = port
-
-    def _hash(self, value: str) -> str:
-        """
-        Generates a hash value for the specified node address.
-
-        Args:
-            address (str): The value to hash.
-
-        Returns:
-            str: The resulting hashed value.
-        """
-        encoded_val = value.encode("utf-8")
-        hash_val = hashlib.sha1(encoded_val).hexdigest()
-        return hash_val
+        self._port_catalog = PortCatalog()
 
     def _call_rpc(
         self, port: int, method_name: str, arg1: Any=None, arg2: Any=None
@@ -87,15 +75,17 @@ class ChordQuery:
         Args:
             key (str): The sought key to query for.
         """
-        hashed_val = self._hash(key)
+        bucket = self._port_catalog.get_bucket(key)
 
         # Identify the Node for retrieving value of the specified key
-        # FIXME - make find_successor return a port number?
-        successor_port = self._call_rpc(self._port, "find_successor")
+        succ_id = self._call_rpc(self._port, "find_successor", bucket)
+        # Retrieve the port of the identified successor Node
+        _, succ_port = self._port_catalog.lookup_node(succ_id)
+        # Retrieve the value mapped to the specified key
+        response = self._call_rpc(succ_port, "get_value", bucket)
 
-        response = self._call_rpc(successor_port, "get_value", hashed_val)
-
-        #TODO - display response to standard output
+        #TODO
+        print(response)
 
 
 if __name__ == "__main__":
