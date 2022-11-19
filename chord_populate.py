@@ -53,7 +53,7 @@ class ChordPopulator:
             reader = DictReader(csvfile)
             
             for row in reader:
-                chord_key = self._port_catalog.hash(
+                chord_key = self._port_catalog.get_bucket(
                     (row[COL_PLAYER_ID], row[COL_YEAR])
                 )
                 records[chord_key] = row
@@ -105,9 +105,9 @@ class ChordPopulator:
         for key, value in self._records.items():
             try:
                 # Identify the Node for storing the key, value pair 
-                succ_hash = self._call_rpc(port, "find_successor")
+                succ_id = self._call_rpc(port, "find_successor")
                 # Retrieve port of the successor
-                succ_port = self._port_catalog.lookup_node(succ_hash)
+                succ_port = self._port_catalog.lookup_node(succ_id)
                 # Save the key, value pair in the specified Node
                 self._call_rpc(succ_port, "store_value", key, value)
 
