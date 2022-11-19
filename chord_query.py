@@ -90,6 +90,11 @@ if __name__ == "__main__":
 
     To run the program, execute the following:
     python3 chord_query.py $NODE_PORT $PLAYER_ID $YEAR
+
+    Example call:
+    # Queries Chord network through Node on port 6002 for 
+    # ('chriskluwe/2506178','2006') key
+    `python chord_query.py 60002 chriskluwe/2506178 2006`
     """
     parser = ArgumentParser(
         description=(

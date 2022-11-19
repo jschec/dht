@@ -119,6 +119,10 @@ if __name__ == "__main__":
 
     To run the program, execute the following:
     python3 chord_populate.py $NODE_PORT $IN_FPATH
+
+    Example call:
+    # Populates Chord network through Node listening on port 8080
+    `python chord_populate.py 8080 Career_Stats_Passing.csv`
     """
     parser = ArgumentParser(
         description=(

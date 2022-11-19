@@ -772,6 +772,17 @@ if __name__ == "__main__":
 
     To run the program, execute the following:
     python3 chord_node.py $NODE_PORT $CHORD_PORT
+
+
+    Example sequential calls:
+    # to create network at start listener on port 8080
+    `python chord_node.py 8080 0` 
+
+    # to connect with existing chord node on port 8080 and launch listener on port 6002
+    `python chord_node.py 60002 8080`
+
+    # to connect with existing chord node on port 60002 and launch listener on port 25282
+    `python chord_node.py 25282 60002` 
     """
     parser = ArgumentParser(
         description=(
