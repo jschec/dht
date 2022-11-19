@@ -7,9 +7,7 @@ Version: 2022-11-13
 from argparse import ArgumentParser
 import pickle
 import socket
-from typing import Any
-
-from chord_node import PortCatalog
+from typing import Any, Tuple
 
 
 # TCP receive buffer size
@@ -30,7 +28,6 @@ class ChordQuery:
             port (int): Port number of an existing ChordNode.
         """
         self._port = port
-        self._port_catalog = PortCatalog()
 
     def _call_rpc(
         self, port: int, method_name: str, arg1: Any=None, arg2: Any=None
@@ -67,7 +64,7 @@ class ChordQuery:
             response = pickle.loads(data)
             return response
 
-    def retrieve_value(self, key: str) -> None:
+    def retrieve_value(self, key: Tuple[str, str]) -> None:
         """
         Queries the Chord network for the value mapped to the specified key
         and displays the resulting response.
@@ -75,16 +72,11 @@ class ChordQuery:
         Args:
             key (str): The sought key to query for.
         """
-        bucket = self._port_catalog.get_bucket(key)
-
-        # Identify the Node for retrieving value of the specified key
-        succ_id = self._call_rpc(self._port, "find_successor", bucket)
-        # Retrieve the port of the identified successor Node
-        _, succ_port = self._port_catalog.lookup_node(succ_id)
         # Retrieve the value mapped to the specified key
-        response = self._call_rpc(succ_port, "get_value", bucket)
+        response = self._call_rpc(self._port, "get_value", key)
 
         #TODO
+        print("The Chord Network responded with: ")
         print(response)
 
 
@@ -96,7 +88,7 @@ if __name__ == "__main__":
     python3 chord_query.py --help
 
     To run the program, execute the following:
-    python3 chord_query.py $NODE_PORT $KEY
+    python3 chord_query.py $NODE_PORT $PLAYER_ID $YEAR
     """
     parser = ArgumentParser(
         description=(
@@ -109,11 +101,18 @@ if __name__ == "__main__":
         help="The port number of an existing ChordNode."
     )
     parser.add_argument(
-        "key",
+        "player_id",
         type=int,
         help=(
-            "The sought key to query for. This key consists of the "
-            "concatenated cell values from column 1 and column 4."
+            "The player identifier in the sought key to query the Chord"
+            "network for."
+        )
+    )
+    parser.add_argument(
+        "year",
+        type=int,
+        help=(
+            "The year in the sought key to query the Chord network for."
         )
     )
 
@@ -122,4 +121,6 @@ if __name__ == "__main__":
     # Initializes the query Object
     querier = ChordQuery(parsed_args.port)
     # Retrieve the value mapped to the specified key from the Chord network.
-    response = querier.retrieve_value(parsed_args.key)
+    response = querier.retrieve_value(
+        (parsed_args.player_id, parsed_args.year)
+    )
